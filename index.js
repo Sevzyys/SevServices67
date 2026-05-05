@@ -18,6 +18,9 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
+// ✅ ANTI-DUPE SYSTEM
+const recentlyWelcomed = new Set();
+
 async function updateMemberCount(guild) {
   const channel = guild.channels.cache.get(process.env.MEMBER_COUNT_CHANNEL_ID);
   if (!channel) return;
@@ -35,6 +38,16 @@ client.once("ready", async () => {
 
 // ================= WELCOME + AUTO ROLE =================
 client.on(Events.GuildMemberAdd, async member => {
+
+  // 🚫 PREVENT DUPLICATE MESSAGES
+  if (recentlyWelcomed.has(member.id)) return;
+
+  recentlyWelcomed.add(member.id);
+
+  setTimeout(() => {
+    recentlyWelcomed.delete(member.id);
+  }, 60000);
+
   try {
     const welcomeChannel = member.guild.channels.cache.get(process.env.WELCOME_CHANNEL_ID);
     const memberRole = member.guild.roles.cache.get(process.env.MEMBER_ROLE_ID);
@@ -45,25 +58,23 @@ client.on(Events.GuildMemberAdd, async member => {
 
     await updateMemberCount(member.guild);
 
- const welcomeEmbed = new EmbedBuilder()
-  .setTitle("💜 Welcome to Sev Services")
-  .setDescription(
-    `Welcome ${member}!\n\n` +
-    "We’re glad to have you here.\n\n" +
-    "Use the ticket panel if you need support, have questions, or want to make a purchase."
-  )
-  .setColor("#4F3E84")
-  .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
-  .setImage("https://media.discordapp.net/attachments/1339915824273559634/1389881488589459477/standard_8.gif")
-  .addFields(
-    {
-      name: "👥 Members",
-      value: `You are member **#${member.guild.memberCount}**`,
-      inline: true
-    }
-  )
-  .setFooter({ text: "Sev Services" })
-  .setTimestamp();
+    const welcomeEmbed = new EmbedBuilder()
+      .setTitle("💜 Welcome to Sev Services")
+      .setDescription(
+        `Welcome ${member}!\n\n` +
+        "We’re glad to have you here.\n\n" +
+        "Use the ticket panel if you need support, have questions, or want to make a purchase."
+      )
+      .setColor("#4F3E84")
+      .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+      .setImage("https://media.discordapp.net/attachments/1339915824273559634/1389881488589459477/standard_8.gif")
+      .addFields({
+        name: "👥 Members",
+        value: `You are member **#${member.guild.memberCount}**`,
+        inline: true
+      })
+      .setFooter({ text: "Sev Services" })
+      .setTimestamp();
 
     if (welcomeChannel) {
       await welcomeChannel.send({
@@ -281,9 +292,5 @@ client.on(Events.InteractionCreate, async interaction => {
     }
   }
 });
-
-console.log("TOKEN EXISTS:", !!process.env.TOKEN);
-console.log("TOKEN LENGTH:", process.env.TOKEN?.length);
-console.log("TOKEN START:", process.env.TOKEN?.slice(0, 10));
 
 client.login(process.env.TOKEN);
