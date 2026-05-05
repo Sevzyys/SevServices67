@@ -18,8 +18,83 @@ const client = new Client({
   intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
 });
 
-client.once("ready", () => {
+async function updateMemberCount(guild) {
+  const channel = guild.channels.cache.get(process.env.MEMBER_COUNT_CHANNEL_ID);
+  if (!channel) return;
+
+  await channel.setName(`Members: ${guild.memberCount}`).catch(console.error);
+}
+
+client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
+
+  for (const guild of client.guilds.cache.values()) {
+    await updateMemberCount(guild);
+  }
+});
+
+// ================= WELCOME + AUTO ROLE =================
+client.on(Events.GuildMemberAdd, async member => {
+  try {
+    const welcomeChannel = member.guild.channels.cache.get(process.env.WELCOME_CHANNEL_ID);
+    const memberRole = member.guild.roles.cache.get(process.env.MEMBER_ROLE_ID);
+
+    if (memberRole) {
+      await member.roles.add(memberRole).catch(console.error);
+    }
+
+    await updateMemberCount(member.guild);
+
+ const welcomeEmbed = new EmbedBuilder()
+  .setTitle("💜 Welcome to Sev Services")
+  .setDescription(
+    `Welcome ${member}!\n\n` +
+    "We’re glad to have you here.\n\n" +
+    "Use the ticket panel if you need support, have questions, or want to make a purchase."
+  )
+  .setColor("#4F3E84")
+  .setThumbnail(member.user.displayAvatarURL({ dynamic: true }))
+  .setImage("https://media.discordapp.net/attachments/1339915824273559634/1389881488589459477/standard_8.gif")
+  .addFields(
+    {
+      name: "👥 Members",
+      value: `You are member **#${member.guild.memberCount}**`,
+      inline: true
+    }
+  )
+  .setFooter({ text: "Sev Services" })
+  .setTimestamp();
+
+    if (welcomeChannel) {
+      await welcomeChannel.send({
+        content: `${member}`,
+        embeds: [welcomeEmbed]
+      });
+    }
+
+    const dmEmbed = new EmbedBuilder()
+      .setTitle("💜 Welcome to Sev Services")
+      .setDescription(
+        `Hey **${member.user.username}**, thanks for joining **Sev Services**!\n\n` +
+        "Need help, have questions, or want to purchase? Open a ticket in the server and staff will assist you."
+      )
+      .setColor("#4F3E84")
+      .setThumbnail(member.guild.iconURL())
+      .setImage("https://media.discordapp.net/attachments/1339915824273559634/1389881488589459477/standard_8.gif")
+      .setFooter({ text: "Sev Services" })
+      .setTimestamp();
+
+    await member.send({ embeds: [dmEmbed] }).catch(() => {
+      console.log(`Could not DM ${member.user.tag}`);
+    });
+
+  } catch (err) {
+    console.error("Welcome system error:", err);
+  }
+});
+
+client.on(Events.GuildMemberRemove, async member => {
+  await updateMemberCount(member.guild);
 });
 
 client.on(Events.InteractionCreate, async interaction => {
@@ -82,8 +157,6 @@ client.on(Events.InteractionCreate, async interaction => {
           "https://media.discordapp.net/attachments/1339915824273559634/1389881488589459477/standard_8.gif";
 
         const title = interaction.options.getString("title");
-
-        // ✅ LINE BREAK FIX
         const description = interaction.options.getString("description")?.replace(/\\n/g, "\n");
 
         const footer = interaction.options.getString("footer");
@@ -120,7 +193,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         if (timestamp) embed.setTimestamp();
 
-        // ✅ FIELD LINE BREAK FIX
         for (let i = 1; i <= 6; i++) {
           const name = interaction.options.getString(`field${i}_name`);
           const value = interaction.options.getString(`field${i}_value`)?.replace(/\\n/g, "\n");
