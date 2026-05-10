@@ -15,11 +15,16 @@ const {
 } = require("discord.js");
 
 const client = new Client({
-  intents: [GatewayIntentBits.Guilds, GatewayIntentBits.GuildMembers]
+  intents: [
+    GatewayIntentBits.Guilds,
+    GatewayIntentBits.GuildMembers,
+    GatewayIntentBits.GuildMessages,
+    GatewayIntentBits.MessageContent
+  ]
 });
 
-// ✅ ANTI-DUPE SYSTEM
 const recentlyWelcomed = new Set();
+const warnings = new Map();
 
 async function updateMemberCount(guild) {
   const channel = guild.channels.cache.get(process.env.MEMBER_COUNT_CHANNEL_ID);
@@ -27,6 +32,25 @@ async function updateMemberCount(guild) {
 
   await channel.setName(`Members: ${guild.memberCount}`).catch(console.error);
 }
+
+const blockedPatterns = [
+  /discord\.gg\/\S+/i,
+  /discord\.com\/invite\/\S+/i,
+  /dsc\.gg\/\S+/i,
+  /free\s+nitro/i,
+  /steam\s+gift/i,
+  /claim\s+reward/i,
+  /click\s+here/i,
+  /cheap\s+prices/i,
+  /buy\s+from\s+me/i,
+  /dm\s+me/i,
+  /join\s+my\s+server/i,
+  /telegram/i,
+  /whatsapp/i,
+  /crypto\s+investment/i,
+  /bit\.ly\/\S+/i,
+  /tinyurl\.com\/\S+/i
+];
 
 client.once("ready", async () => {
   console.log(`Logged in as ${client.user.tag}`);
@@ -36,10 +60,55 @@ client.once("ready", async () => {
   }
 });
 
+// ================= SECURITY SYSTEM =================
+client.on(Events.MessageCreate, async message => {
+  if (message.author.bot || !message.guild) return;
+
+  if (message.member.roles.cache.has(process.env.STAFF_ROLE_ID)) return;
+
+  const detected = blockedPatterns.some(pattern => pattern.test(message.content));
+  if (!detected) return;
+
+  await message.delete().catch(() => {});
+
+  const currentWarnings = warnings.get(message.author.id) || 0;
+  const newWarnings = currentWarnings + 1;
+  warnings.set(message.author.id, newWarnings);
+
+  await message.channel.send({
+    content: `${message.author}, warning **${newWarnings}/3**. Promotions, scam links, and advertising are not allowed.`
+  });
+
+  const logChannel = message.guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
+
+  if (logChannel) {
+    const logEmbed = new EmbedBuilder()
+      .setTitle("🚨 Security Detection")
+      .setColor("#4F3E84")
+      .setDescription(
+        `**User:** ${message.author}\n` +
+        `**Warnings:** ${newWarnings}/3\n` +
+        `**Channel:** ${message.channel}\n\n` +
+        `**Message:**\n${message.content}`
+      )
+      .setTimestamp();
+
+    await logChannel.send({ embeds: [logEmbed] });
+  }
+
+  if (newWarnings >= 3) {
+    await message.member.kick("Reached 3 auto-moderation warnings").catch(() => {});
+
+    if (logChannel) {
+      await logChannel.send({
+        content: `👢 ${message.author} was kicked for reaching 3 security warnings.`
+      });
+    }
+  }
+});
+
 // ================= WELCOME + AUTO ROLE =================
 client.on(Events.GuildMemberAdd, async member => {
-
-  // 🚫 PREVENT DUPLICATE MESSAGES
   if (recentlyWelcomed.has(member.id)) return;
 
   recentlyWelcomed.add(member.id);
@@ -113,7 +182,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
     // ================= PANEL =================
     if (interaction.commandName === "panel") {
-
       await interaction.deferReply({ flags: 64 });
 
       const embed = new EmbedBuilder()
@@ -147,20 +215,16 @@ client.on(Events.InteractionCreate, async interaction => {
         components: [row]
       });
 
-      return interaction.editReply({
-        content: "Panel sent."
-      });
+      return interaction.editReply({ content: "Panel sent." });
     }
 
     // ================= EMBED BUILDER =================
     if (interaction.commandName === "embed") {
-
       await interaction.deferReply({ flags: 64 });
 
       const sub = interaction.options.getSubcommand();
 
       if (sub === "build") {
-
         const defaultThumbnail =
           "https://cdn.discordapp.com/attachments/1499585079796830208/1500153869206818987/standard_1.gif";
 
@@ -169,7 +233,6 @@ client.on(Events.InteractionCreate, async interaction => {
 
         const title = interaction.options.getString("title");
         const description = interaction.options.getString("description")?.replace(/\\n/g, "\n");
-
         const footer = interaction.options.getString("footer");
         const footerIcon = interaction.options.getString("footer_icon");
         const author = interaction.options.getString("author");
@@ -187,21 +250,8 @@ client.on(Events.InteractionCreate, async interaction => {
           .setImage(banner);
 
         if (url) embed.setURL(url);
-
-        if (footer) {
-          embed.setFooter({
-            text: footer,
-            iconURL: footerIcon || undefined
-          });
-        }
-
-        if (author) {
-          embed.setAuthor({
-            name: author,
-            iconURL: authorIcon || undefined
-          });
-        }
-
+        if (footer) embed.setFooter({ text: footer, iconURL: footerIcon || undefined });
+        if (author) embed.setAuthor({ name: author, iconURL: authorIcon || undefined });
         if (timestamp) embed.setTimestamp();
 
         for (let i = 1; i <= 6; i++) {
@@ -213,13 +263,8 @@ client.on(Events.InteractionCreate, async interaction => {
           }
         }
 
-        await interaction.channel.send({
-          embeds: [embed]
-        });
-
-        return interaction.editReply({
-          content: "Embed sent."
-        });
+        await interaction.channel.send({ embeds: [embed] });
+        return interaction.editReply({ content: "Embed sent." });
       }
     }
   }
@@ -249,18 +294,33 @@ client.on(Events.InteractionCreate, async interaction => {
           { id: guild.id, deny: [PermissionsBitField.Flags.ViewChannel] },
           {
             id: member.id,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.ReadMessageHistory
+            ]
           },
           {
             id: process.env.STAFF_ROLE_ID,
-            allow: [PermissionsBitField.Flags.ViewChannel, PermissionsBitField.Flags.SendMessages]
+            allow: [
+              PermissionsBitField.Flags.ViewChannel,
+              PermissionsBitField.Flags.SendMessages,
+              PermissionsBitField.Flags.ReadMessageHistory
+            ]
           }
         ]
       });
 
       const buttons = new ActionRowBuilder().addComponents(
-        new ButtonBuilder().setCustomId("claim_ticket").setLabel("👤 Claim").setStyle(ButtonStyle.Success),
-        new ButtonBuilder().setCustomId("close_ticket").setLabel("🔒 Close").setStyle(ButtonStyle.Danger)
+        new ButtonBuilder()
+          .setCustomId("claim_ticket")
+          .setLabel("👤 Claim")
+          .setStyle(ButtonStyle.Success),
+
+        new ButtonBuilder()
+          .setCustomId("close_ticket")
+          .setLabel("🔒 Close")
+          .setStyle(ButtonStyle.Danger)
       );
 
       await channel.send({
@@ -280,15 +340,71 @@ client.on(Events.InteractionCreate, async interaction => {
 
     if (interaction.customId === "claim_ticket") {
       return interaction.reply({
-        content: `Claimed by ${interaction.user}`
+        content: `👤 Claimed by ${interaction.user}`
       });
     }
 
     if (interaction.customId === "close_ticket") {
+      const confirmRow = new ActionRowBuilder().addComponents(
+        new ButtonBuilder()
+          .setCustomId("confirm_close_ticket")
+          .setLabel("Yes, close ticket")
+          .setStyle(ButtonStyle.Danger),
+
+        new ButtonBuilder()
+          .setCustomId("cancel_close_ticket")
+          .setLabel("Cancel")
+          .setStyle(ButtonStyle.Secondary)
+      );
+
       return interaction.reply({
-        content: "Are you sure?",
+        content: "Are you sure you want to close this ticket?",
+        components: [confirmRow],
         flags: 64
       });
+    }
+
+    if (interaction.customId === "cancel_close_ticket") {
+      return interaction.update({
+        content: "Ticket close cancelled.",
+        components: []
+      });
+    }
+
+    if (interaction.customId === "confirm_close_ticket") {
+      const logChannel = interaction.guild.channels.cache.get(process.env.LOG_CHANNEL_ID);
+
+      await interaction.update({
+        content: "Creating transcript and closing ticket...",
+        components: []
+      });
+
+      if (logChannel) {
+        const transcript = await discordTranscripts.createTranscript(interaction.channel, {
+          limit: -1,
+          returnBuffer: false,
+          filename: `${interaction.channel.name}-transcript.html`
+        });
+
+        const logEmbed = new EmbedBuilder()
+          .setTitle("🔒 Ticket Closed")
+          .setColor("#4F3E84")
+          .setDescription(
+            `**Closed By:** ${interaction.user}\n` +
+            `**Channel:** #${interaction.channel.name}\n\n` +
+            "Transcript attached below."
+          )
+          .setTimestamp();
+
+        await logChannel.send({
+          embeds: [logEmbed],
+          files: [transcript]
+        });
+      }
+
+      setTimeout(() => {
+        interaction.channel.delete().catch(console.error);
+      }, 3000);
     }
   }
 });
